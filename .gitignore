@@ -1,0 +1,12 @@
+# editor files
+*.swp
+
+# build artifacts
+*.mod.c
+*.o
+*.ko
+*.o.cmd
+*.ko.cmd
+modules.order
+Module.symvers
+.tmp_versions
