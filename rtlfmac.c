@@ -197,11 +197,6 @@ static void rtlfmac_rx_cleanup(struct rtlfmac_cfg80211_priv *priv)
 	struct urb *urb;
 
 	usb_kill_anchored_urbs(&priv->rx_submitted);
-	while ((urb = usb_get_from_anchor(&priv->rx_submitted))) {
-		usb_free_coherent(priv->usbdev, urb->transfer_buffer_length,
-				urb->transfer_buffer, urb->transfer_dma);
-		usb_free_urb(urb);
-	}
 
 	while ((urb = usb_get_from_anchor(&priv->rx_cleanup))) {
 		usb_free_coherent(priv->usbdev, urb->transfer_buffer_length,
