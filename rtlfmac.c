@@ -774,6 +774,7 @@ static void rtlfmac_upload_fw(struct rtlfmac_cfg80211_priv *priv, const struct f
 
 static void rtlfmac_fw_cb(const struct firmware *firmware, void *context)
 {
+	int err;
 	struct rtlfmac_cfg80211_priv *priv = context;
 
 	complete(&priv->fw_ready);
@@ -788,6 +789,12 @@ static void rtlfmac_fw_cb(const struct firmware *firmware, void *context)
 	rtlfmac_chip_init_complete(priv);
 
 	rtlfmac_rx_start(priv);
+
+	err = wiphy_register(priv->wiphy);
+	if (err < 0) {
+		pr_err("%s: failed wiphy_register: %i\n", __func__, err);
+		return;
+	}
 }
 
 int rtlfmac_load_fw(struct rtlfmac_cfg80211_priv *priv)
@@ -811,9 +818,6 @@ static struct rtlfmac_cfg80211_priv *rtlfmac_alloc_wiphy(void)
 {
 	struct rtlfmac_cfg80211_priv *priv;
 	struct wiphy *wiphy;
-#if 0
-	s32 err = 0;
-#endif
 
 	wiphy = wiphy_new(&rtlfmac_cfg80211_ops,
 			sizeof(struct rtlfmac_cfg80211_priv));
@@ -839,15 +843,6 @@ static struct rtlfmac_cfg80211_priv *rtlfmac_alloc_wiphy(void)
 
 	wiphy->signal_type = CFG80211_SIGNAL_TYPE_MBM;
 	//wiphy->flags = ;
-
-#if 0
-	err = wiphy_register(wiphy);
-	if (err < 0) {
-		pr_err("%s: failed wiphy_register: %i\n", __func__, err);
-		wiphy_free(wiphy);
-		return NULL;
-	}
-#endif
 
 	return priv;
 }
@@ -962,9 +957,7 @@ static void rtlfmac_disconnect(struct usb_interface *intf)
 	wait_for_completion(&priv->fw_ready);
 
 	rtlfmac_rx_cleanup(priv);
-#if 0
 	wiphy_unregister(priv->wiphy);
-#endif
 	wiphy_free(priv->wiphy);
 }
 
