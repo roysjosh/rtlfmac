@@ -214,6 +214,14 @@ struct rtlfmac_tx_desc {
 	u8 reserved07_24;
 } __packed;
 
+struct rtlfmac_tx_h2c_desc {
+	/* dword0 */
+	u16 len;
+	u8 cmdid;
+	u8 seqno:7;
+	u8 more_cmds:1;
+} __packed;
+
 enum fw_c2h_event {
 	C2H_READ_MACREG_EVENT,				/* 0 */
 	C2H_READBB_EVENT,
@@ -331,6 +339,47 @@ struct rtlfmac_sitesurvey_cmd {
 	u8 ssid[IEEE80211_MAX_SSID_LEN + 1];
 } __packed;
 
+struct ndis_802_11_ssid {
+	u32 ssidlen;
+	u8 ssid[IEEE80211_MAX_SSID_LEN];
+};
+
+struct ndis_802_11_configuration_fh {
+	u32 len;
+	u32 hoppattern;
+	u32 hopset;
+	u32 dwelltime;
+};
+
+struct ndis_802_11_configuration {
+	u32 len;
+	u32 beaconperiod;
+	u32 atimwindow;
+	u32 dsconfig;
+	struct ndis_802_11_configuration_fh fhconfig;
+};
+
+struct ndis_wlan_bssid_ex {
+	u32 len;
+	u8 macaddr[ETH_ALEN];
+	u8 reserved10[2];
+	struct ndis_802_11_ssid ssid;
+	u32 privacy;
+	s32 rssi;
+	u32 networktype;
+	struct ndis_802_11_configuration config;
+	u32 inframode;
+	u8 supportedrates[16];
+	u32 ielen;
+	u8 ies[0];
+};
+
+struct ndis_802_11_fixed_ies {
+	u8 timestamp[8];
+	u16 beaconint;
+	u16 caps;
+};
+
 struct rtlfmac_fw_hdr {
 	u16 signature;
 	u16 version;
@@ -398,12 +447,19 @@ struct rtlfmac_cfg80211_priv {
 	struct usb_device *usbdev;
 	struct device *dev;
 
+	struct net_device *ndev;
 	struct wiphy *wiphy;
+	struct wireless_dev *wdev;
+
+	/* cfg80211 */
+	struct cfg80211_scan_request *scan_request;
 
 	u8 num_endpoints;
 	u32 in_ep_num;
 	u32 ep_mapping[__RTL_TXQ_NUM];
 	u8 hwrev;
+
+	u8 h2c_cmd_seqno:7;
 
 	struct usb_anchor rx_cleanup;
 	struct usb_anchor rx_submitted;

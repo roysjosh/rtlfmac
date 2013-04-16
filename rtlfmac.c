@@ -21,8 +21,10 @@
  *
  *****************************************************************************/
 
+#include <linux/etherdevice.h>
 #include <linux/ieee80211.h>
 #include <linux/module.h>
+#include <linux/netdevice.h>
 #include <linux/usb.h>
 #include <net/cfg80211.h>
 
@@ -205,6 +207,50 @@ static void rtlfmac_rx_cleanup(struct rtlfmac_cfg80211_priv *priv)
 	}
 }
 
+static void rtlfmac_rx_survey_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
+{
+	int freq;
+	size_t ie_len;
+	struct cfg80211_bss *bss;
+	struct ieee80211_channel *chan;
+	struct ndis_802_11_fixed_ies *fixed;
+	struct ndis_wlan_bssid_ex *survey = (struct ndis_wlan_bssid_ex *)data;
+	s32 signal;
+	u8 *ie;
+	u16 caps, beaconint;
+	u32 bssid_len;
+	u64 tsf;
+
+	pr_info("%s: found BSS %s/%pM, channel %i\n", __func__, survey->ssid.ssid,
+			survey->macaddr, survey->config.dsconfig);
+
+	bssid_len = le32_to_cpu(survey->len);
+	if (bssid_len < sizeof(struct ndis_wlan_bssid_ex) +
+			sizeof(struct ndis_802_11_fixed_ies))
+		return;
+
+	fixed = (struct ndis_802_11_fixed_ies *)survey->ies;
+
+	ie = survey->ies + sizeof(struct ndis_802_11_fixed_ies);
+	ie_len = survey->ielen - sizeof(struct ndis_802_11_fixed_ies);
+	if (sizeof(struct ndis_802_11_fixed_ies) > survey->ielen)
+		ie_len = 0;
+
+	freq = ieee80211_channel_to_frequency(survey->config.dsconfig,
+			IEEE80211_BAND_2GHZ);
+	chan = ieee80211_get_channel(priv->wiphy, freq);
+
+	//signal = DBM_TO_MBM(rtl92s_signal_scale_mapping(le32_to_cpu(survey->rssi)));
+	signal = 0;
+	tsf = le64_to_cpu(*(__le64 *)fixed->timestamp);
+	caps = le16_to_cpu(fixed->caps);
+	beaconint = le16_to_cpu(fixed->beaconint);
+
+	bss = cfg80211_inform_bss(priv->wiphy, chan, survey->macaddr, tsf, caps,
+			beaconint, ie, ie_len, signal, GFP_ATOMIC);
+	cfg80211_put_bss(bss);
+}
+
 static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buff *skb)
 {
 	struct rtlfmac_rx_desc *pdesc;
@@ -225,6 +271,13 @@ static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buf
 		evlen = le16_to_cpu(c2h->len);
 
 		switch(evnum) {
+		case C2H_SURVEY_EVENT:
+			rtlfmac_rx_survey_resp(priv, skb->data);
+			break;
+		case C2H_SURVEY_DONE_EVENT:
+			cfg80211_scan_done(priv->scan_request, false);
+			priv->scan_request = NULL;
+			break;
 		case C2H_FWDBG_EVENT:
 			pr_info("%s: fwdbg: %s%s", __func__, skb->data,
 					(skb->data[evlen - 2] == '\n' ? "" : "\n"));
@@ -345,43 +398,46 @@ static int rtlfmac_rx_start(struct rtlfmac_cfg80211_priv *priv)
 	return ret;
 }
 
-#if 0
-static int rtlfmac_write_mem(struct rtlfmac_cfg80211_priv *priv, u8 *data, u32 len, enum rtlfmac_txq qnum)
-{
-	u8 *ptr;
-	u32 ep_num;
-	struct sk_buff *skb;
-
-	skb = dev_alloc_skb(len);
-	if (!skb) {
-		return -ENOMEM;
-	}
-	ptr = skb_put(skb, len);
-	memcpy(ptr, data, len);
-
-	ep_num = priv->ep_mapping[qnum];
-	return _usb_write_bulk(priv->usbdev, skb, ep_num);
-}
-#endif
-
 /* rtlfmac functions */
 int rtlfmac_fw_cmd(struct rtlfmac_cfg80211_priv *priv, uint8_t code, void *buf, int len)
 {
-#if 0
+	u8 *ptr;
+	u32 ep_num;
+	struct rtlfmac_tx_desc *pdesc;
+	struct rtlfmac_tx_h2c_desc *h2c;
 	struct sk_buff *skb;
 
-	skb = dev_alloc_skb(len);
+	skb = dev_alloc_skb(len + RTL_TX_HEADER_SIZE + 8);
 	if (!skb) {
 		return -ENOMEM;
 	}
-#endif
+	skb_reserve(skb, RTL_TX_HEADER_SIZE + 8);
+	ptr = skb_put(skb, len);
+	memcpy(ptr, buf, len);
 
-	return 0;
+	h2c = (struct rtlfmac_tx_h2c_desc *)skb_push(skb, 8);
+	memset(h2c, 0, 8);
+	h2c->len = cpu_to_le16(len);
+	h2c->cmdid = code;
+	h2c->seqno = priv->h2c_cmd_seqno++;
+
+	pdesc = (struct rtlfmac_tx_desc *)skb_push(skb, RTL_TX_HEADER_SIZE);
+	memset(pdesc, 0, RTL_TX_HEADER_SIZE);
+	pdesc->first_seg = pdesc->last_seg = 1;
+	pdesc->offset = 0x20;
+	pdesc->pkt_size = cpu_to_le32(len + 8);
+	pdesc->queue_sel = 0x13;
+	pdesc->own = 1;
+
+	ep_num = priv->ep_mapping[RTL_TXQ_H2CCMD];
+	return _usb_write_bulk(priv->usbdev, skb, ep_num);
 }
 
 int rtlfmac_sitesurvey(struct rtlfmac_cfg80211_priv *priv, struct cfg80211_scan_request *req)
 {
 	struct rtlfmac_sitesurvey_cmd cmd;
+
+	priv->scan_request = req;
 
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.bsslimit = cpu_to_le32(48);
@@ -400,18 +456,24 @@ static int rtlfmac_cfg80211_scan(struct wiphy *wiphy,
 {
 	struct rtlfmac_cfg80211_priv *priv = wiphy_to_cfg(wiphy);
 
+	pr_info("%s: enter\n", __func__);
+
 	return rtlfmac_sitesurvey(priv, request);
 }
 
 static int rtlfmac_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
 		struct cfg80211_connect_params *sme)
 {
+	pr_info("%s: enter\n", __func__);
+
 	return 0;
 }
 
 static int rtlfmac_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *ndev,
 		u16 reason_code)
 {
+	pr_info("%s: enter\n", __func__);
+
 	return 0;
 }
 
@@ -472,6 +534,37 @@ static const u32 rtlfmac_cipher_suites[] = {
 	WLAN_CIPHER_SUITE_TKIP,
 	WLAN_CIPHER_SUITE_CCMP,
 	WLAN_CIPHER_SUITE_AES_CMAC,
+};
+
+/* rtlfmac netdev functions */
+static int rtlfmac_ndo_open(struct net_device *ndev)
+{
+	pr_info("%s: enter\n", __func__);
+
+	return 0;
+}
+
+static int rtlfmac_ndo_stop(struct net_device *ndev)
+{
+	pr_info("%s: enter\n", __func__);
+
+	return 0;
+}
+
+netdev_tx_t rtlfmac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
+{
+	pr_info("%s: enter\n", __func__);
+
+	return 0;
+}
+
+/* net_device data */
+static const struct net_device_ops rtlfmac_netdev_ops = {
+	.ndo_open		= rtlfmac_ndo_open,
+	.ndo_stop		= rtlfmac_ndo_stop,
+	.ndo_start_xmit		= rtlfmac_ndo_start_xmit,
+	.ndo_set_mac_address	= eth_mac_addr,
+	.ndo_validate_addr	= eth_validate_addr,
 };
 
 /* chip init functions */
@@ -795,6 +888,15 @@ static void rtlfmac_fw_cb(const struct firmware *firmware, void *context)
 		pr_err("%s: failed wiphy_register: %i\n", __func__, err);
 		return;
 	}
+
+	err = register_netdev(priv->ndev);
+	if (err < 0) {
+		pr_err("%s: failed register_netdev: %i\n", __func__, err);
+		return;
+	}
+
+	netif_tx_stop_all_queues(priv->ndev);
+	netif_carrier_off(priv->ndev);
 }
 
 int rtlfmac_load_fw(struct rtlfmac_cfg80211_priv *priv)
@@ -814,19 +916,34 @@ int rtlfmac_load_fw(struct rtlfmac_cfg80211_priv *priv)
 }
 
 /* probe helper functions */
-static struct rtlfmac_cfg80211_priv *rtlfmac_alloc_wiphy(void)
+static struct rtlfmac_cfg80211_priv *rtlfmac_alloc(void)
 {
+	struct net_device *ndev;
 	struct rtlfmac_cfg80211_priv *priv;
 	struct wiphy *wiphy;
+	struct wireless_dev *wdev;
 
+	/* allocate wireless_dev */
+	wdev = kzalloc(sizeof(struct wireless_dev), GFP_KERNEL);
+	if (!wdev) {
+		return NULL;
+	}
+
+	/* fill out wireless_dev */
+	wdev->iftype = NL80211_IFTYPE_STATION;
+
+	/* allocate wiphy */
 	wiphy = wiphy_new(&rtlfmac_cfg80211_ops,
 			sizeof(struct rtlfmac_cfg80211_priv));
 	if (!wiphy) {
 		pr_err("%s: wiphy_new failed\n", __func__);
+		kfree(wdev);
 		return NULL;
 	}
 	priv = wiphy_priv(wiphy);
+	priv->wdev = wdev;
 	priv->wiphy = wiphy;
+	wdev->wiphy = wiphy;
 
 	/* fill out wiphy */
 	//wiphy->privid
@@ -844,6 +961,21 @@ static struct rtlfmac_cfg80211_priv *rtlfmac_alloc_wiphy(void)
 	wiphy->signal_type = CFG80211_SIGNAL_TYPE_MBM;
 	//wiphy->flags = ;
 
+	/* allocate net_device */
+	ndev = alloc_netdev(0, "wlan%d", ether_setup);
+	if (!ndev) {
+		pr_err("%s: alloc_netdev failed\n", __func__);
+		wiphy_free(wiphy);
+		kfree(wdev);
+		return NULL;
+	}
+	priv->ndev = ndev;
+	wdev->netdev = ndev;
+
+	/* fill out net_device */
+	ndev->netdev_ops = &rtlfmac_netdev_ops;
+	ndev->ieee80211_ptr = wdev;
+
 	return priv;
 }
 
@@ -858,8 +990,21 @@ int rtlfmac_probe(struct usb_interface *intf,
 
 	pr_info("%s: enter\n", __func__);
 
+	/* check the interface */
+	tmpb = intf->cur_altsetting->desc.bNumEndpoints;
+	switch(tmpb) {
+	case 4:
+	case 6:
+	case 11:
+		pr_info("%s: %i endpoints\n", __func__, tmpb);
+		break;
+	default:
+		pr_err("%s: unknown number of endpoints!\n", __func__);
+		return -1;
+	}
+
 	/* cfg80211 */
-	priv = rtlfmac_alloc_wiphy();
+	priv = rtlfmac_alloc();
 	if (!priv) {
 		return -1;
 	}
@@ -895,15 +1040,12 @@ int rtlfmac_probe(struct usb_interface *intf,
 		priv->ep_mapping[RTL_TXQ_HI] = 0xb;
 		priv->ep_mapping[RTL_TXQ_MGT] = 0xc;
 		break;
-	default:
-		pr_err("%s: unknown number of endpoints!\n", __func__);
-		wiphy_free(priv->wiphy);
-		return -1;
 	}
 
 	/* driver state */
 	dev_set_drvdata(priv->dev, priv);
 	set_wiphy_dev(priv->wiphy, priv->dev);
+	SET_NETDEV_DEV(priv->ndev, priv->dev);
 
 	/* ensure chip is in initial state */
 	rtlfmac_write_byte(priv, REG_USB_HRPWM, 0x00);
@@ -934,7 +1076,10 @@ int rtlfmac_probe(struct usb_interface *intf,
 
 	/* read MAC address from registers */
 	for(i = 0; i < ETH_ALEN; i++) {
-		priv->wiphy->perm_addr[i] = rtlfmac_read_byte(priv, REG_USB_MAC_ADDR + i);
+		tmpb = rtlfmac_read_byte(priv, REG_USB_MAC_ADDR + i);
+		priv->ndev->dev_addr[i] = tmpb;
+		priv->ndev->perm_addr[i] = tmpb;
+		priv->wiphy->perm_addr[i] = tmpb;
 	}
 	pr_info("%s: MAC address from registers: %pM\n", __func__, priv->wiphy->perm_addr);
 
@@ -957,8 +1102,18 @@ static void rtlfmac_disconnect(struct usb_interface *intf)
 	wait_for_completion(&priv->fw_ready);
 
 	rtlfmac_rx_cleanup(priv);
+
+	if (priv->scan_request) {
+		cfg80211_scan_done(priv->scan_request, true);
+	}
+
+	unregister_netdev(priv->ndev);
+	free_netdev(priv->ndev);
+
 	wiphy_unregister(priv->wiphy);
 	wiphy_free(priv->wiphy);
+
+	kfree(priv->wdev);
 }
 
 static const struct usb_device_id products[] = {
