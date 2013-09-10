@@ -319,7 +319,7 @@ static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buf
 		return;
 	}
 
-	dev_kfree_skb_any(skb); /* FIXME */
+	netif_rx(skb);
 }
 
 static void rtlfmac_rx_complete(struct urb *urb)
@@ -661,12 +661,16 @@ static int rtlfmac_ndo_open(struct net_device *ndev)
 {
 	pr_info("%s: enter\n", __func__);
 
+	netif_start_queue(ndev);
+
 	return 0;
 }
 
 static int rtlfmac_ndo_stop(struct net_device *ndev)
 {
 	pr_info("%s: enter\n", __func__);
+
+	netif_stop_queue(ndev);
 
 	return 0;
 }
