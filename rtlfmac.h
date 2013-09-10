@@ -339,6 +339,19 @@ struct rtlfmac_sitesurvey_cmd {
 	u8 ssid[IEEE80211_MAX_SSID_LEN + 1];
 } __packed;
 
+enum {
+	IW_AUTHMODE_OPEN,
+	IW_AUTHMODE_SHARED,
+	IW_AUTHMODE_WPA,
+};
+
+struct rtlfmac_setauth_cmd {
+	u8 mode;
+	u8 _1x;
+	u8 reserved2;
+	u8 reserved3;
+} __packed;
+
 struct ndis_802_11_ssid {
 	u32 ssidlen;
 	u8 ssid[IEEE80211_MAX_SSID_LEN];
@@ -379,6 +392,29 @@ struct ndis_802_11_fixed_ies {
 	u16 beaconint;
 	u16 caps;
 };
+
+struct rtlfmac_joinbss_cmd {
+	struct ndis_wlan_bssid_ex network;
+};
+
+/* event structures */
+
+struct wlan_network {
+#if 0
+	/* we don't use this, so avoid 32/64-bit issues */
+	struct list_head list;
+#else
+	u32 next, prev;
+#endif
+	int network_type;
+	int fixed;
+	unsigned int last_scanned;
+	int aid;
+	int join_res; /* -1: auth fail, -2: assoc fail, >0: TID */
+	struct ndis_wlan_bssid_ex network;
+} __packed;
+
+/* firmware structures */
 
 struct rtlfmac_fw_hdr {
 	u16 signature;
@@ -442,6 +478,8 @@ struct rtlfmac_fw_priv {
 	u8 reserved46;
 	u8 reserved47;
 } __packed;
+
+/* driver private structures */
 
 struct rtlfmac_cfg80211_priv {
 	struct usb_device *usbdev;

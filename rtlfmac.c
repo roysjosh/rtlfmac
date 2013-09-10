@@ -251,6 +251,30 @@ static void rtlfmac_rx_survey_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 	cfg80211_put_bss(bss);
 }
 
+static void rtlfmac_rx_join_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
+{
+	struct wlan_network *res = (struct wlan_network *)data;
+	u16 status;
+
+	pr_info("%s: net_type(%d) fixed(%d) ls(%u) aid(%d) join_res(%i)\n", __func__,
+			res->network_type, res->fixed, res->last_scanned, res->aid, res->join_res);
+
+	switch(res->join_res) {
+	case -2:
+		status = WLAN_STATUS_ASSOC_DENIED_UNSPEC;
+		break;
+	case -1:
+		status = WLAN_STATUS_UNKNOWN_AUTH_TRANSACTION;
+		break;
+	default:
+		status = WLAN_STATUS_SUCCESS;
+		break;
+	}
+
+	cfg80211_connect_result(priv->ndev, res->network.macaddr, NULL, 0,
+			res->network.ies, res->network.ielen, status, GFP_KERNEL);
+}
+
 static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buff *skb)
 {
 	struct rtlfmac_rx_desc *pdesc;
@@ -277,6 +301,9 @@ static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buf
 		case C2H_SURVEY_DONE_EVENT:
 			cfg80211_scan_done(priv->scan_request, false);
 			priv->scan_request = NULL;
+			break;
+		case C2H_JOIN_BSS_EVENT:
+			rtlfmac_rx_join_resp(priv, skb->data);
 			break;
 		case C2H_FWDBG_EVENT:
 			pr_info("%s: fwdbg: %s%s", __func__, skb->data,
@@ -450,6 +477,97 @@ int rtlfmac_sitesurvey(struct rtlfmac_cfg80211_priv *priv, struct cfg80211_scan_
 	return rtlfmac_fw_cmd(priv, H2C_SITESURVEY_CMD, &cmd, sizeof(cmd));
 }
 
+int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
+		struct cfg80211_connect_params *sme)
+{
+	int chan = -1, ret;
+	size_t ie_len;
+	struct cfg80211_bss *bss;
+	struct ieee80211_channel *channel = sme->channel;
+	struct ndis_802_11_fixed_ies *fixed;
+	struct rtlfmac_joinbss_cmd *cmd;
+	struct rtlfmac_setauth_cmd *authcmd;
+
+	bss = cfg80211_get_bss(priv->wiphy, channel, sme->bssid, sme->ssid,
+			sme->ssid_len, WLAN_CAPABILITY_ESS, WLAN_CAPABILITY_ESS);
+	if (!bss) {
+		pr_err("%s: Unable to find BSS\n", __func__);
+		return -ENOENT;
+	}
+
+	if (!channel) {
+		channel = bss->channel;
+	}
+	if (channel) {
+		chan = ieee80211_frequency_to_channel(channel->center_freq);
+	}
+
+	pr_info("%s: '%.*s':[%pM]:%d:[%d,0x%x:0x%x]\n", __func__,
+			(int)sme->ssid_len, sme->ssid, bss->bssid, chan, sme->privacy,
+			sme->crypto.wpa_versions, sme->auth_type);
+
+	// set_auth
+	authcmd = kzalloc(sizeof(struct rtlfmac_setauth_cmd), GFP_KERNEL);
+	if (!authcmd) {
+		ret = -ENOMEM;
+		goto done;
+	}
+
+	if (sme->crypto.wpa_versions) {
+		authcmd->mode = IW_AUTHMODE_WPA;
+	} else if (sme->auth_type == NL80211_AUTHTYPE_SHARED_KEY) {
+		authcmd->mode = IW_AUTHMODE_SHARED;
+	} else if (sme->auth_type == NL80211_AUTHTYPE_OPEN_SYSTEM) {
+		authcmd->mode = IW_AUTHMODE_OPEN;
+	} else { // default to WPA
+		authcmd->mode = IW_AUTHMODE_WPA;
+	}
+
+	ret = rtlfmac_fw_cmd(priv, H2C_SETAUTH_CMD, authcmd, sizeof(*authcmd));
+	kfree(authcmd);
+	if (ret) {
+		goto done;
+	}
+
+	// set_shared_key ?
+
+	// joinbss
+	pr_info("%s: ie_len:%d\n", __func__, sme->ie_len);
+	ie_len = sizeof(struct ndis_802_11_fixed_ies) + sme->ie_len;
+
+	cmd = kzalloc(sizeof(struct rtlfmac_joinbss_cmd) + ie_len, GFP_KERNEL);
+	if (!cmd) {
+		ret = -ENOMEM;
+		goto done;
+	}
+
+	cmd->network.len = cpu_to_le32(sizeof(struct ndis_wlan_bssid_ex) + ie_len);
+	memcpy(cmd->network.macaddr, bss->bssid, ETH_ALEN);
+	cmd->network.ssid.ssidlen = cpu_to_le32(sme->ssid_len);
+	memcpy(cmd->network.ssid.ssid, sme->ssid, sme->ssid_len);
+	cmd->network.privacy = cpu_to_le32(sme->privacy);
+	cmd->network.networktype = cpu_to_le32(3); // Ndis802_11OFDM24
+	cmd->network.config.len = sizeof(cmd->network.config);
+	cmd->network.config.beaconperiod = cpu_to_le32(bss->beacon_interval);
+	cmd->network.config.dsconfig = cpu_to_le32(chan);
+	cmd->network.inframode = cpu_to_le32(2); // Ndis802_11AutoUnknown
+	cmd->network.ielen = ie_len;
+	// construct fixed IE
+	fixed = (struct ndis_802_11_fixed_ies *)cmd->network.ies;
+	fixed->beaconint = cpu_to_le16(bss->beacon_interval);
+	fixed->caps = cpu_to_le16(bss->capability);
+	// append provided IEs
+	memcpy(&fixed[1], sme->ie, sme->ie_len);
+
+	ret = rtlfmac_fw_cmd(priv, H2C_JOINBSS_CMD, cmd, sizeof(*cmd) + ie_len);
+	kfree(cmd);
+
+done:
+	cfg80211_put_bss(bss);
+
+	return ret;
+}
+
 /* rtlfmac cfg80211 functions */
 static int rtlfmac_cfg80211_scan(struct wiphy *wiphy,
 		struct cfg80211_scan_request *request)
@@ -464,9 +582,11 @@ static int rtlfmac_cfg80211_scan(struct wiphy *wiphy,
 static int rtlfmac_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev,
 		struct cfg80211_connect_params *sme)
 {
+	struct rtlfmac_cfg80211_priv *priv = wiphy_to_cfg(wiphy);
+
 	pr_info("%s: enter\n", __func__);
 
-	return 0;
+	return rtlfmac_connect(priv, ndev, sme);
 }
 
 static int rtlfmac_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *ndev,
