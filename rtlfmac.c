@@ -248,7 +248,7 @@ static void rtlfmac_rx_survey_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 
 	bss = cfg80211_inform_bss(priv->wiphy, chan, survey->macaddr, tsf, caps,
 			beaconint, ie, ie_len, signal, GFP_ATOMIC);
-	cfg80211_put_bss(bss);
+	cfg80211_put_bss(priv->wiphy, bss);
 }
 
 static void rtlfmac_rx_join_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
@@ -563,7 +563,7 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 	kfree(cmd);
 
 done:
-	cfg80211_put_bss(bss);
+	cfg80211_put_bss(priv->wiphy, bss);
 
 	return ret;
 }
