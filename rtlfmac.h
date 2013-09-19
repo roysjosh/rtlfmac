@@ -503,6 +503,9 @@ struct rtlfmac_cfg80211_priv {
 	struct usb_anchor rx_submitted;
 
 	struct completion fw_ready;
+
+	struct tasklet_struct rx_work_tasklet;
+	struct sk_buff_head rx_queue;
 };
 
 static inline struct rtlfmac_cfg80211_priv *wiphy_to_cfg(struct wiphy *w)

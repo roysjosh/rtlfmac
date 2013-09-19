@@ -200,6 +200,9 @@ static void rtlfmac_rx_cleanup(struct rtlfmac_cfg80211_priv *priv)
 
 	usb_kill_anchored_urbs(&priv->rx_submitted);
 
+	tasklet_kill(&priv->rx_work_tasklet);
+	skb_queue_purge(&priv->rx_queue);
+
 	while ((urb = usb_get_from_anchor(&priv->rx_cleanup))) {
 		usb_free_coherent(priv->usbdev, urb->transfer_buffer_length,
 				urb->transfer_buffer, urb->transfer_dma);
@@ -272,7 +275,7 @@ static void rtlfmac_rx_join_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 	}
 
 	cfg80211_connect_result(priv->ndev, res->network.macaddr, NULL, 0,
-			res->network.ies, res->network.ielen, status, GFP_KERNEL);
+			res->network.ies, res->network.ielen, status, GFP_ATOMIC);
 }
 
 static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buff *skb)
@@ -322,6 +325,16 @@ static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buf
 	netif_rx(skb);
 }
 
+static void rtlfmac_rx_tasklet(unsigned long param)
+{
+	struct rtlfmac_cfg80211_priv *priv = (struct rtlfmac_cfg80211_priv *)param;
+	struct sk_buff *skb;
+
+	while ((skb = skb_dequeue(&priv->rx_queue))) {
+		rtlfmac_rx_process(priv, skb);
+	}
+}
+
 static void rtlfmac_rx_complete(struct urb *urb)
 {
 	int err;
@@ -341,7 +354,8 @@ static void rtlfmac_rx_complete(struct urb *urb)
 		skb_reserve(skb, 32); /* for radiotap */
 		memcpy(skb_put(skb, size), urb->transfer_buffer, size);
 
-		rtlfmac_rx_process(priv, skb);
+		skb_queue_tail(&priv->rx_queue, skb);
+		tasklet_schedule(&priv->rx_work_tasklet);
 
 		goto resubmit;
 	}
@@ -383,6 +397,10 @@ static int rtlfmac_rx_start(struct rtlfmac_cfg80211_priv *priv)
 
 	init_usb_anchor(&priv->rx_cleanup);
 	init_usb_anchor(&priv->rx_submitted);
+
+	skb_queue_head_init(&priv->rx_queue);
+	priv->rx_work_tasklet.func = rtlfmac_rx_tasklet;
+	priv->rx_work_tasklet.data = (unsigned long)priv;
 
 	for(i = 0; i < RTL_NUM_RX_URBS; i++) {
 		urb = usb_alloc_urb(0, GFP_KERNEL);
