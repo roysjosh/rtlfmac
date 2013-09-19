@@ -953,11 +953,11 @@ static void rtlfmac_upload_fw(struct rtlfmac_cfg80211_priv *priv, const struct f
 		switch(state) {
 		case 0:
 			mask16 = IMEM_CODE_DONE | IMEM_CHK_RPT;
-			i = 10;
+			i = 20;
 			break;
 		case 1:
 			mask16 = EMEM_CODE_DONE | EMEM_CHK_RPT;
-			i = 5;
+			i = 20;
 			break;
 		case 2:
 			mask16 = IMEM_RDY;
@@ -969,7 +969,7 @@ static void rtlfmac_upload_fw(struct rtlfmac_cfg80211_priv *priv, const struct f
 			break;
 		case 4:
 			mask16 = FWRDY;
-			i = 600;
+			i = 10000;
 			break;
 		}
 
