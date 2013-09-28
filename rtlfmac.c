@@ -858,7 +858,7 @@ static int rtlfmac_chip_init_complete(struct rtlfmac_cfg80211_priv *priv)
 	/* Fix USB RX FIFO error - done in chip init */
 	/* Set MAC address */
 	for(val8 = 0; val8 < 6; val8++) {
-		rtlfmac_write_byte(priv, REG_MACIDR0, priv->wiphy->perm_addr[val8]);
+		rtlfmac_write_byte(priv, REG_MACIDR0 + val8, priv->wiphy->perm_addr[val8]);
 	}
 
 	return 0;
