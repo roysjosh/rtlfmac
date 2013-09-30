@@ -332,6 +332,10 @@ enum fw_h2c_cmd {
 	MAX_H2CCMD,					/* 77 */
 };
 
+struct rtlfmac_disconnect_cmd {
+	u32 reserved0;
+} __packed;
+
 enum {
 	IW_MODE_AUTO,
 	IW_MODE_ADHOC,

@@ -683,9 +683,14 @@ static int rtlfmac_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev
 static int rtlfmac_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *ndev,
 		u16 reason_code)
 {
+	struct rtlfmac_cfg80211_priv *priv = wiphy_to_cfg(wiphy);
+	struct rtlfmac_disconnect_cmd cmd;
+
 	netdev_dbg(ndev, "%s: enter\n", __func__);
 
-	return 0;
+	memset(&cmd, 0, sizeof(cmd));
+
+	return rtlfmac_fw_cmd(priv, H2C_DISCONNECT_CMD, &cmd, sizeof(cmd));
 }
 
 static int rtlfmac_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev,
