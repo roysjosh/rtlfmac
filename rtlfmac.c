@@ -287,6 +287,27 @@ static void rtlfmac_rx_join_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 	}
 }
 
+/* Unfortunately, ieee80211_data_to_8023 doesn't handle the IV junk bytes
+ * between the 802.11 header and the SNAP header.  Thus, our own function.
+ */
+static int rtlfmac_data_to_8023(struct sk_buff *skb, const uint8_t *addr, enum nl80211_iftype iftype)
+{
+	int hdrlen, iv_len = 8; // AES/CCMP
+	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
+
+	hdrlen = ieee80211_hdrlen(hdr->frame_control);
+
+	if (ieee80211_has_protected(hdr->frame_control)) {
+		memmove(skb->data + iv_len, skb->data, hdrlen);
+		skb_pull(skb, iv_len);
+	}
+
+	//print_hex_dump(KERN_INFO, "rtlfmac rx: ", DUMP_PREFIX_OFFSET, 16, 1, skb->data, skb->len, true);
+	pr_info("%s: proto=0x%04x\n", __func__, (skb->data[hdrlen + 6] << 8) | skb->data[hdrlen + 7]);
+
+	return ieee80211_data_to_8023(skb, addr, iftype);
+}
+
 static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buff *skb)
 {
 	struct rtlfmac_rx_desc *pdesc;
@@ -331,6 +352,18 @@ static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buf
 		return;
 	}
 
+	// remove PHY status
+	skb_pull(skb, pdesc->drvinfo_size * 8);
+
+	// convert 802.11 frame to 802.3 frame
+	if (rtlfmac_data_to_8023(skb, priv->ndev->perm_addr, priv->wdev->iftype)) {
+		pr_err("%s: failed to convert 802.11 to 802.3\n", __func__);
+		dev_kfree_skb_any(skb);
+		return;
+	}
+
+	skb->dev = priv->ndev;
+	skb->protocol = eth_type_trans(skb, skb->dev);
 	netif_rx(skb);
 }
 
