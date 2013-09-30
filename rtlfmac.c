@@ -690,11 +690,73 @@ static int rtlfmac_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *n
 	return 0;
 }
 
+static int rtlfmac_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev,
+		u8 key_index, bool pairwise, const u8 *mac_addr, struct key_params *params)
+{
+	u8 algo;
+	struct rtlfmac_cfg80211_priv *priv = wiphy_to_cfg(wiphy);
+	struct rtlfmac_setkey_cmd keycmd;
+	struct rtlfmac_setstakey_cmd stakeycmd;
+
+	pr_info("%s: enter idx=%hhu pair=%u mac=%pM\n", __func__, key_index, pairwise, mac_addr);
+
+	switch(params->cipher) {
+	case WLAN_CIPHER_SUITE_CCMP:
+		algo = IW_KEYALGO_AES;
+		break;
+	default:
+		pr_err("%s: unknown cipher: 0x%08X\n", __func__, params->cipher);
+		return -ENOTSUPP;
+	}
+
+	if (params->seq && params->seq_len) {
+		print_hex_dump(KERN_INFO, "rtlfmac add_key iv: ", DUMP_PREFIX_NONE, 16, 1, params->seq, params->seq_len, true);
+	}
+
+	if (pairwise && mac_addr) {
+		memcpy(&stakeycmd.addr, mac_addr, ETH_ALEN);
+		stakeycmd.algo = algo;
+		memcpy(&stakeycmd.key, params->key, params->key_len);
+
+		return rtlfmac_fw_cmd(priv, H2C_SETSTAKEY_CMD, &stakeycmd, sizeof(stakeycmd));
+	} else {
+		keycmd.algo = algo;
+		keycmd.keyid = key_index;
+		keycmd.grpkey = (mac_addr == NULL ? 1 : 0);
+		memcpy(&keycmd.key, params->key, params->key_len);
+
+		return rtlfmac_fw_cmd(priv, H2C_SETKEY_CMD, &keycmd, sizeof(keycmd));
+	}
+}
+
+static int rtlfmac_cfg80211_del_key(struct wiphy *wiphy, struct net_device *netdev,
+		u8 key_index, bool pairwise, const u8 *mac_addr)
+{
+	pr_info("%s: enter idx=%hhu\n", __func__, key_index);
+
+	return 0;
+}
+
+static int rtlfmac_cfg80211_set_default_key(struct wiphy *wiphy, struct net_device *netdev,
+		u8 key_index, bool unicast, bool multicast)
+{
+	struct rtlfmac_cfg80211_priv *priv = wiphy_to_cfg(wiphy);
+
+	pr_info("%s: enter idx=%hhu ucast=%u mcast=%u\n", __func__, key_index, unicast, multicast);
+
+	priv->key_id = key_index;
+
+	return 0;
+}
+
 /* cfg80211 data */
 static struct cfg80211_ops rtlfmac_cfg80211_ops = {
-	.scan		= rtlfmac_cfg80211_scan,
-	.connect	= rtlfmac_cfg80211_connect,
-	.disconnect	= rtlfmac_cfg80211_disconnect,
+	.scan			= rtlfmac_cfg80211_scan,
+	.connect		= rtlfmac_cfg80211_connect,
+	.disconnect		= rtlfmac_cfg80211_disconnect,
+	.add_key		= rtlfmac_cfg80211_add_key,
+	.del_key		= rtlfmac_cfg80211_del_key,
+	.set_default_key	= rtlfmac_cfg80211_set_default_key,
 };
 
 static struct ieee80211_channel rtl_channeltable_2g[] = {

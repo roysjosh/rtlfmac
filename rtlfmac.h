@@ -369,6 +369,28 @@ struct rtlfmac_setauth_cmd {
 	u8 reserved3;
 } __packed;
 
+enum {
+	IW_KEYALGO_NONE,
+	IW_KEYALGO_WEP40,
+	IW_KEYALGO_TKIP,
+	IW_KEYALGO_TKIP_WTMIC,
+	IW_KEYALGO_AES,
+	IW_KEYALGO_WEP104,
+};
+
+struct rtlfmac_setkey_cmd {
+	u8 algo;
+	u8 keyid;
+	u8 grpkey;
+	u8 key[16];
+} __packed;
+
+struct rtlfmac_setstakey_cmd {
+	u8 addr[ETH_ALEN];
+	u8 algo;
+	u8 key[16];
+} __packed;
+
 struct ndis_802_11_ssid {
 	u32 ssidlen;
 	u8 ssid[IEEE80211_MAX_SSID_LEN];
@@ -517,6 +539,7 @@ struct rtlfmac_cfg80211_priv {
 	u8 h2c_cmd_seqno:7;
 
 	bool connecting;
+	u8 key_id:2;
 	u8 bssid[ETH_ALEN];
 
 	struct usb_anchor rx_cleanup;
