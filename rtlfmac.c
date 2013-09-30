@@ -224,7 +224,7 @@ static void rtlfmac_rx_survey_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 	u32 bssid_len;
 	u64 tsf;
 
-	pr_info("%s: found BSS %s/%pM, channel %i\n", __func__, survey->ssid.ssid,
+	netdev_dbg(priv->ndev, "%s: found BSS %s/%pM, channel %i\n", __func__, survey->ssid.ssid,
 			survey->macaddr, survey->config.dsconfig);
 
 	bssid_len = le32_to_cpu(survey->len);
@@ -259,12 +259,12 @@ static void rtlfmac_rx_join_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 	struct wlan_network *res = (struct wlan_network *)data;
 	u16 status;
 
-	pr_info("%s: net_type(%d) fixed(%d) ls(%u) aid(%d) join_res(%i)\n", __func__,
-			res->network_type, res->fixed, res->last_scanned, res->aid, res->join_res);
 	if (!priv->connecting) {
 		return;
 	}
 	priv->connecting = false;
+
+	netdev_dbg(priv->ndev, "%s: aid(%d) join_res(%i)\n", __func__, res->aid, res->join_res);
 
 	switch(res->join_res) {
 	case -2:
@@ -302,9 +302,6 @@ static int rtlfmac_data_to_8023(struct sk_buff *skb, const uint8_t *addr, enum n
 		skb_pull(skb, iv_len);
 	}
 
-	//print_hex_dump(KERN_INFO, "rtlfmac rx: ", DUMP_PREFIX_OFFSET, 16, 1, skb->data, skb->len, true);
-	pr_info("%s: proto=0x%04x\n", __func__, (skb->data[hdrlen + 6] << 8) | skb->data[hdrlen + 7]);
-
 	return ieee80211_data_to_8023(skb, addr, iftype);
 }
 
@@ -339,11 +336,11 @@ static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buf
 			rtlfmac_rx_join_resp(priv, skb->data);
 			break;
 		case C2H_FWDBG_EVENT:
-			pr_info("%s: fwdbg: %s%s", __func__, skb->data,
+			netdev_dbg(priv->ndev, "%s: fwdbg: %s%s", __func__, skb->data,
 					(skb->data[evlen - 2] == '\n' ? "" : "\n"));
 			break;
 		default:
-			pr_info("%s: unhandled C2H %i\n", __func__, evnum);
+			netdev_warn(priv->ndev, "%s: unhandled C2H %i\n", __func__, evnum);
 			break;
 		}
 
@@ -357,7 +354,7 @@ static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buf
 
 	// convert 802.11 frame to 802.3 frame
 	if (rtlfmac_data_to_8023(skb, priv->ndev->perm_addr, priv->wdev->iftype)) {
-		pr_err("%s: failed to convert 802.11 to 802.3\n", __func__);
+		netdev_err(priv->ndev, "%s: failed to convert 802.11 to 802.3\n", __func__);
 		dev_kfree_skb_any(skb);
 		return;
 	}
@@ -492,7 +489,6 @@ static int rtlfmac_rx_start(struct rtlfmac_cfg80211_priv *priv)
 int rtlfmac_fw_cmd(struct rtlfmac_cfg80211_priv *priv, uint8_t code, void *buf, int len)
 {
 	u8 *ptr;
-	u32 ep_num;
 	struct rtlfmac_tx_desc *pdesc;
 	struct rtlfmac_tx_h2c_desc *h2c;
 	struct sk_buff *skb;
@@ -514,13 +510,13 @@ int rtlfmac_fw_cmd(struct rtlfmac_cfg80211_priv *priv, uint8_t code, void *buf, 
 	pdesc = (struct rtlfmac_tx_desc *)skb_push(skb, RTL_TX_HEADER_SIZE);
 	memset(pdesc, 0, RTL_TX_HEADER_SIZE);
 	pdesc->first_seg = pdesc->last_seg = 1;
-	pdesc->offset = 0x20;
+	pdesc->offset = RTL_TX_HEADER_SIZE;
 	pdesc->pkt_size = cpu_to_le32(len + 8);
 	pdesc->queue_sel = 0x13;
 	pdesc->own = 1;
 
-	ep_num = priv->ep_mapping[RTL_TXQ_H2CCMD];
-	return _usb_write_bulk(priv->usbdev, skb, ep_num);
+	skb->queue_mapping = RTL_TXQ_H2CCMD;
+	return rtlfmac_write_skb(priv, skb);
 }
 
 int rtlfmac_sitesurvey(struct rtlfmac_cfg80211_priv *priv, struct cfg80211_scan_request *req)
@@ -555,7 +551,7 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 	bss = cfg80211_get_bss(priv->wiphy, channel, sme->bssid, sme->ssid,
 			sme->ssid_len, WLAN_CAPABILITY_ESS, WLAN_CAPABILITY_ESS);
 	if (!bss) {
-		pr_err("%s: Unable to find BSS\n", __func__);
+		netdev_err(ndev, "%s: Unable to find BSS\n", __func__);
 		return -ENOENT;
 	}
 
@@ -566,7 +562,7 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 		chan = ieee80211_frequency_to_channel(channel->center_freq);
 	}
 
-	pr_info("%s: '%.*s':[%pM]:%d:[%d,0x%x:0x%x]\n", __func__,
+	netdev_dbg(ndev, "%s: '%.*s':[%pM]:%d:[%d,0x%x:0x%x]\n", __func__,
 			(int)sme->ssid_len, sme->ssid, bss->bssid, chan, sme->privacy,
 			sme->crypto.wpa_versions, sme->auth_type);
 
@@ -609,10 +605,7 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 		goto done;
 	}
 
-	// set_shared_key ?
-
 	// joinbss
-	pr_info("%s: ie_len:%u\n", __func__, (unsigned int)sme->ie_len);
 	ie_len = sizeof(struct ndis_802_11_fixed_ies) + sme->ie_len;
 
 	cmd = kzalloc(sizeof(struct rtlfmac_joinbss_cmd) + ie_len, GFP_KERNEL);
@@ -669,7 +662,7 @@ static int rtlfmac_cfg80211_scan(struct wiphy *wiphy,
 {
 	struct rtlfmac_cfg80211_priv *priv = wiphy_to_cfg(wiphy);
 
-	pr_info("%s: enter\n", __func__);
+	netdev_dbg(priv->ndev, "%s: enter\n", __func__);
 
 	return rtlfmac_sitesurvey(priv, request);
 }
@@ -679,7 +672,7 @@ static int rtlfmac_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev
 {
 	struct rtlfmac_cfg80211_priv *priv = wiphy_to_cfg(wiphy);
 
-	pr_info("%s: enter\n", __func__);
+	netdev_dbg(ndev, "%s: enter\n", __func__);
 
 	return rtlfmac_connect(priv, ndev, sme);
 }
@@ -687,7 +680,7 @@ static int rtlfmac_cfg80211_connect(struct wiphy *wiphy, struct net_device *ndev
 static int rtlfmac_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *ndev,
 		u16 reason_code)
 {
-	pr_info("%s: enter\n", __func__);
+	netdev_dbg(ndev, "%s: enter\n", __func__);
 
 	return 0;
 }
@@ -700,19 +693,15 @@ static int rtlfmac_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev
 	struct rtlfmac_setkey_cmd keycmd;
 	struct rtlfmac_setstakey_cmd stakeycmd;
 
-	pr_info("%s: enter idx=%hhu pair=%u mac=%pM\n", __func__, key_index, pairwise, mac_addr);
+	netdev_dbg(ndev, "%s: enter idx=%hhu pair=%u mac=%pM\n", __func__, key_index, pairwise, mac_addr);
 
 	switch(params->cipher) {
 	case WLAN_CIPHER_SUITE_CCMP:
 		algo = IW_KEYALGO_AES;
 		break;
 	default:
-		pr_err("%s: unknown cipher: 0x%08X\n", __func__, params->cipher);
+		netdev_err(ndev, "%s: unknown cipher: 0x%08X\n", __func__, params->cipher);
 		return -ENOTSUPP;
-	}
-
-	if (params->seq && params->seq_len) {
-		print_hex_dump(KERN_INFO, "rtlfmac add_key iv: ", DUMP_PREFIX_NONE, 16, 1, params->seq, params->seq_len, true);
 	}
 
 	if (pairwise && mac_addr) {
@@ -734,20 +723,20 @@ static int rtlfmac_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev
 	}
 }
 
-static int rtlfmac_cfg80211_del_key(struct wiphy *wiphy, struct net_device *netdev,
+static int rtlfmac_cfg80211_del_key(struct wiphy *wiphy, struct net_device *ndev,
 		u8 key_index, bool pairwise, const u8 *mac_addr)
 {
-	pr_info("%s: enter idx=%hhu\n", __func__, key_index);
+	netdev_dbg(ndev, "%s: enter idx=%hhu\n", __func__, key_index);
 
 	return 0;
 }
 
-static int rtlfmac_cfg80211_set_default_key(struct wiphy *wiphy, struct net_device *netdev,
+static int rtlfmac_cfg80211_set_default_key(struct wiphy *wiphy, struct net_device *ndev,
 		u8 key_index, bool unicast, bool multicast)
 {
 	struct rtlfmac_cfg80211_priv *priv = wiphy_to_cfg(wiphy);
 
-	pr_info("%s: enter idx=%hhu ucast=%u mcast=%u\n", __func__, key_index, unicast, multicast);
+	netdev_dbg(ndev, "%s: enter idx=%hhu ucast=%u mcast=%u\n", __func__, key_index, unicast, multicast);
 
 	priv->key_id = key_index;
 
@@ -819,7 +808,7 @@ static const u32 rtlfmac_cipher_suites[] = {
 /* rtlfmac netdev functions */
 static int rtlfmac_ndo_open(struct net_device *ndev)
 {
-	pr_info("%s: enter\n", __func__);
+	netdev_dbg(ndev, "%s: enter\n", __func__);
 
 	netif_tx_start_all_queues(ndev);
 
@@ -828,7 +817,7 @@ static int rtlfmac_ndo_open(struct net_device *ndev)
 
 static int rtlfmac_ndo_stop(struct net_device *ndev)
 {
-	pr_info("%s: enter\n", __func__);
+	netdev_dbg(ndev, "%s: enter\n", __func__);
 
 	netif_tx_stop_all_queues(ndev);
 	netif_carrier_off(ndev);
@@ -844,15 +833,15 @@ netdev_tx_t rtlfmac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	struct rtlfmac_cfg80211_priv *priv = wiphy_priv(ndev->ieee80211_ptr->wiphy);
 	struct rtlfmac_tx_desc *pdesc;
 
-	pr_info("%s: enter %pM->%pM proto=%04x\n", __func__, eth->h_source, eth->h_dest, be16_to_cpu(eth->h_proto));
+	netdev_dbg(ndev, "%s: enter %pM->%pM proto=%04x\n", __func__, eth->h_source, eth->h_dest, be16_to_cpu(eth->h_proto));
 
 	if (priv->ieee8021x_blocked && be16_to_cpu(eth->h_proto) != ETH_P_PAE) {
-		pr_info("%s: drop non 802.1x packet\n", __func__);
+		netdev_dbg(ndev, "%s: drop non 802.1x packet\n", __func__);
 		return NETDEV_TX_OK;
 	}
 
 	if (ieee80211_data_from_8023(skb, ndev->perm_addr, priv->wdev->iftype, priv->bssid, 1)) {
-		pr_err("%s: failed to convert 802.3 to 802.11\n", __func__);
+		netdev_err(ndev, "%s: failed to convert 802.3 to 802.11\n", __func__);
 		return -1;
 	}
 
@@ -880,7 +869,7 @@ netdev_tx_t rtlfmac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	}
 
 	if (skb_headroom(skb) < RTL_TX_HEADER_SIZE) {
-		pr_err("%s: not enough headroom\n", __func__);
+		netdev_err(ndev, "%s: not enough headroom\n", __func__);
 		return -1;
 	}
 
@@ -1206,8 +1195,6 @@ static void rtlfmac_upload_fw(struct rtlfmac_cfg80211_priv *priv, const struct f
 			return;
 		}
 	}
-
-	pr_info("%s: firmware upload complete\n", __func__);
 }
 
 static void rtlfmac_fw_cb(const struct firmware *firmware, void *context)
@@ -1335,8 +1322,6 @@ int rtlfmac_probe(struct usb_interface *intf,
 	struct usb_device *usb = interface_to_usbdev(intf);
 	u8 tmpb;
 
-	pr_info("%s: enter\n", __func__);
-
 	/* check the interface */
 	tmpb = intf->cur_altsetting->desc.bNumEndpoints;
 	switch(tmpb) {
@@ -1432,8 +1417,6 @@ int rtlfmac_probe(struct usb_interface *intf,
 
 	rtlfmac_load_fw(priv);
 
-	pr_info("%s: leaving\n", __func__);
-
 	return 0;
 }
 
@@ -1441,8 +1424,6 @@ static void rtlfmac_disconnect(struct usb_interface *intf)
 {
 	struct rtlfmac_cfg80211_priv *priv;
 	struct usb_device *usb = interface_to_usbdev(intf);
-
-	pr_info("%s: enter\n", __func__);
 
 	priv = dev_get_drvdata(&usb->dev);
 
