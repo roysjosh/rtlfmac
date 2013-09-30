@@ -335,6 +335,9 @@ static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buf
 		case C2H_JOIN_BSS_EVENT:
 			rtlfmac_rx_join_resp(priv, skb->data);
 			break;
+		case C2H_DEL_STA_EVENT:
+			cfg80211_disconnected(priv->ndev, 0, NULL, 0, GFP_ATOMIC);
+			break;
 		case C2H_FWDBG_EVENT:
 			netdev_dbg(priv->ndev, "%s: fwdbg: %s%s", __func__, skb->data,
 					(skb->data[evlen - 2] == '\n' ? "" : "\n"));
