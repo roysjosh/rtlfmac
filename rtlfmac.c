@@ -438,6 +438,7 @@ static int rtlfmac_rx_start(struct rtlfmac_cfg80211_priv *priv)
 	void *buf;
 
 	priv->connecting = false;
+	priv->ieee8021x_blocked = false;
 
 	init_usb_anchor(&priv->rx_cleanup);
 	init_usb_anchor(&priv->rx_submitted);
@@ -593,6 +594,7 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 
 	if (sme->crypto.wpa_versions) {
 		authcmd->mode = IW_AUTHMODE_WPA;
+		priv->ieee8021x_blocked = true;
 	} else if (sme->auth_type == NL80211_AUTHTYPE_SHARED_KEY) {
 		authcmd->mode = IW_AUTHMODE_SHARED;
 	} else if (sme->auth_type == NL80211_AUTHTYPE_OPEN_SYSTEM) {
@@ -720,6 +722,9 @@ static int rtlfmac_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev
 
 		return rtlfmac_fw_cmd(priv, H2C_SETSTAKEY_CMD, &stakeycmd, sizeof(stakeycmd));
 	} else {
+		// assume 802.1x was successful
+		priv->ieee8021x_blocked = false;
+
 		keycmd.algo = algo;
 		keycmd.keyid = key_index;
 		keycmd.grpkey = (mac_addr == NULL ? 1 : 0);
@@ -833,9 +838,69 @@ static int rtlfmac_ndo_stop(struct net_device *ndev)
 
 netdev_tx_t rtlfmac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
-	pr_info("%s: enter\n", __func__);
+	int hdrlen, iv_len = 8; // AES/CCMP
+	struct ethhdr *eth = (struct ethhdr *)skb->data;
+	struct ieee80211_qos_hdr *hdr;
+	struct rtlfmac_cfg80211_priv *priv = wiphy_priv(ndev->ieee80211_ptr->wiphy);
+	struct rtlfmac_tx_desc *pdesc;
 
-	return 0;
+	pr_info("%s: enter %pM->%pM proto=%04x\n", __func__, eth->h_source, eth->h_dest, be16_to_cpu(eth->h_proto));
+
+	if (priv->ieee8021x_blocked && be16_to_cpu(eth->h_proto) != ETH_P_PAE) {
+		pr_info("%s: drop non 802.1x packet\n", __func__);
+		return NETDEV_TX_OK;
+	}
+
+	if (ieee80211_data_from_8023(skb, ndev->perm_addr, priv->wdev->iftype, priv->bssid, 1)) {
+		pr_err("%s: failed to convert 802.3 to 802.11\n", __func__);
+		return -1;
+	}
+
+	hdr = (struct ieee80211_qos_hdr *)skb->data;
+	hdr->qos_ctrl = 0;
+
+	priv->seqno[RTL_TXQ_BE] = ieee80211_sn_inc(priv->seqno[RTL_TXQ_BE]);
+	hdr->seq_ctrl = cpu_to_le16(IEEE80211_SN_TO_SEQ(priv->seqno[RTL_TXQ_BE]));
+
+	// or in PROT if WEP/WPA is enabled
+	if (/*wpa && */!priv->ieee8021x_blocked) {
+		// 802.1x is complete
+		hdr->frame_control |= cpu_to_le16(IEEE80211_FCTL_PROTECTED);
+	}
+
+	// need to emulate IEEE80211_KEY_FLAG_PUT_IV_SPACE
+	if (ieee80211_has_protected(hdr->frame_control)) {
+		hdrlen = ieee80211_hdrlen(hdr->frame_control);
+		skb_push(skb, iv_len);
+		memmove(skb->data, skb->data + iv_len, hdrlen);
+
+		// XXX set IV
+		memset(skb->data + hdrlen, iv_len, 0);
+		skb->data[hdrlen + 3] |= 0x20;
+	}
+
+	if (skb_headroom(skb) < RTL_TX_HEADER_SIZE) {
+		pr_err("%s: not enough headroom\n", __func__);
+		return -1;
+	}
+
+	pdesc = (struct rtlfmac_tx_desc *)skb_push(skb, RTL_TX_HEADER_SIZE);
+	memset(pdesc, 0, RTL_TX_HEADER_SIZE);
+	pdesc->first_seg = pdesc->last_seg = 1;
+	pdesc->offset = RTL_TX_HEADER_SIZE;
+	pdesc->pkt_size = cpu_to_le16(skb->len - RTL_TX_HEADER_SIZE);
+	pdesc->macid = 5;
+	pdesc->queue_sel = 0x03; // BE
+	// FIXME if (wpa)
+	pdesc->sec_type = 0x03; // AES/CCMP
+	pdesc->key_id = priv->key_id;
+	// XXX
+	pdesc->own = 1;
+
+	skb->queue_mapping = RTL_TXQ_BE;
+	rtlfmac_write_skb(priv, skb);
+
+	return NETDEV_TX_OK;
 }
 
 /* net_device data */
@@ -1254,6 +1319,8 @@ static struct rtlfmac_cfg80211_priv *rtlfmac_alloc(void)
 
 	/* fill out net_device */
 	ndev->netdev_ops = &rtlfmac_netdev_ops;
+	ndev->needed_headroom = RTL_TX_HEADER_SIZE + sizeof(struct ieee80211_qos_hdr) +
+			8 + 8 - 14; // IV junk + SNAP - sizeof(Ethernet header)
 	ndev->ieee80211_ptr = wdev;
 
 	return priv;

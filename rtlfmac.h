@@ -539,8 +539,10 @@ struct rtlfmac_cfg80211_priv {
 	u8 h2c_cmd_seqno:7;
 
 	bool connecting;
+	bool ieee8021x_blocked;
 	u8 key_id:2;
 	u8 bssid[ETH_ALEN];
+	u16 seqno[__RTL_TXQ_NUM];
 
 	struct usb_anchor rx_cleanup;
 	struct usb_anchor rx_submitted;
