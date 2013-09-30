@@ -610,7 +610,7 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 	// set_shared_key ?
 
 	// joinbss
-	pr_info("%s: ie_len:%d\n", __func__, sme->ie_len);
+	pr_info("%s: ie_len:%u\n", __func__, (unsigned int)sme->ie_len);
 	ie_len = sizeof(struct ndis_802_11_fixed_ies) + sme->ie_len;
 
 	cmd = kzalloc(sizeof(struct rtlfmac_joinbss_cmd) + ie_len, GFP_KERNEL);
