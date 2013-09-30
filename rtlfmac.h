@@ -332,6 +332,23 @@ enum fw_h2c_cmd {
 	MAX_H2CCMD,					/* 77 */
 };
 
+enum {
+	IW_MODE_AUTO,
+	IW_MODE_ADHOC,
+	IW_MODE_INFRA,
+	IW_MODE_MASTER,
+	IW_MODE_REPEAT,
+	IW_MODE_SECOND,
+	IW_MODE_MONITOR,
+};
+
+struct rtlfmac_setopmode_cmd {
+	u8 opmode;
+	u8 reserved1;
+	u8 reserved2;
+	u8 reserved3;
+} __packed;
+
 struct rtlfmac_sitesurvey_cmd {
 	u32 active;
 	u32 bsslimit;
@@ -498,6 +515,9 @@ struct rtlfmac_cfg80211_priv {
 	u8 hwrev;
 
 	u8 h2c_cmd_seqno:7;
+
+	bool connecting;
+	u8 bssid[ETH_ALEN];
 
 	struct usb_anchor rx_cleanup;
 	struct usb_anchor rx_submitted;

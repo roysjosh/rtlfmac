@@ -261,6 +261,10 @@ static void rtlfmac_rx_join_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 
 	pr_info("%s: net_type(%d) fixed(%d) ls(%u) aid(%d) join_res(%i)\n", __func__,
 			res->network_type, res->fixed, res->last_scanned, res->aid, res->join_res);
+	if (!priv->connecting) {
+		return;
+	}
+	priv->connecting = false;
 
 	switch(res->join_res) {
 	case -2:
@@ -276,6 +280,11 @@ static void rtlfmac_rx_join_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 
 	cfg80211_connect_result(priv->ndev, res->network.macaddr, NULL, 0,
 			res->network.ies, res->network.ielen, status, GFP_ATOMIC);
+
+	if (WLAN_STATUS_SUCCESS == status) {
+		memcpy(priv->bssid, res->network.macaddr, ETH_ALEN);
+		netif_carrier_on(priv->ndev);
+	}
 }
 
 static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buff *skb)
@@ -395,6 +404,8 @@ static int rtlfmac_rx_start(struct rtlfmac_cfg80211_priv *priv)
 	struct urb *urb;
 	void *buf;
 
+	priv->connecting = false;
+
 	init_usb_anchor(&priv->rx_cleanup);
 	init_usb_anchor(&priv->rx_submitted);
 
@@ -505,6 +516,7 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 	struct ndis_802_11_fixed_ies *fixed;
 	struct rtlfmac_joinbss_cmd *cmd;
 	struct rtlfmac_setauth_cmd *authcmd;
+	struct rtlfmac_setopmode_cmd *modecmd;
 
 	bss = cfg80211_get_bss(priv->wiphy, channel, sme->bssid, sme->ssid,
 			sme->ssid_len, WLAN_CAPABILITY_ESS, WLAN_CAPABILITY_ESS);
@@ -524,6 +536,21 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 			(int)sme->ssid_len, sme->ssid, bss->bssid, chan, sme->privacy,
 			sme->crypto.wpa_versions, sme->auth_type);
 
+	// set_opmode
+	modecmd = kzalloc(sizeof(struct rtlfmac_setopmode_cmd), GFP_KERNEL);
+	if (!modecmd) {
+		ret = -ENOMEM;
+		goto done;
+	}
+
+	modecmd->opmode = IW_MODE_INFRA;
+
+	ret = rtlfmac_fw_cmd(priv, H2C_SETOPMODE_CMD, modecmd, sizeof(*modecmd));
+	kfree(modecmd);
+	if (ret) {
+		goto done;
+	}
+
 	// set_auth
 	authcmd = kzalloc(sizeof(struct rtlfmac_setauth_cmd), GFP_KERNEL);
 	if (!authcmd) {
@@ -537,8 +564,8 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 		authcmd->mode = IW_AUTHMODE_SHARED;
 	} else if (sme->auth_type == NL80211_AUTHTYPE_OPEN_SYSTEM) {
 		authcmd->mode = IW_AUTHMODE_OPEN;
-	} else { // default to WPA
-		authcmd->mode = IW_AUTHMODE_WPA;
+	} else { // default to open
+		authcmd->mode = IW_AUTHMODE_OPEN;
 	}
 
 	ret = rtlfmac_fw_cmd(priv, H2C_SETAUTH_CMD, authcmd, sizeof(*authcmd));
@@ -568,8 +595,20 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 	cmd->network.config.len = sizeof(cmd->network.config);
 	cmd->network.config.beaconperiod = cpu_to_le32(bss->beacon_interval);
 	cmd->network.config.dsconfig = cpu_to_le32(chan);
-	cmd->network.inframode = cpu_to_le32(2); // Ndis802_11AutoUnknown
-	cmd->network.ielen = ie_len;
+	cmd->network.inframode = cpu_to_le32(1); // ???
+	cmd->network.ielen = cpu_to_le32(ie_len);
+	cmd->network.supportedrates[0] = 0x82;
+	cmd->network.supportedrates[1] = 0x84;
+	cmd->network.supportedrates[2] = 0x8b;
+	cmd->network.supportedrates[3] = 0x96;
+	cmd->network.supportedrates[4] = 0x0c;
+	cmd->network.supportedrates[5] = 0x12;
+	cmd->network.supportedrates[6] = 0x18;
+	cmd->network.supportedrates[7] = 0x24;
+	cmd->network.supportedrates[8] = 0x30;
+	cmd->network.supportedrates[9] = 0x48;
+	cmd->network.supportedrates[10] = 0x60;
+	cmd->network.supportedrates[11] = 0x6c;
 	// construct fixed IE
 	fixed = (struct ndis_802_11_fixed_ies *)cmd->network.ies;
 	fixed->beaconint = cpu_to_le16(bss->beacon_interval);
@@ -579,6 +618,9 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 
 	ret = rtlfmac_fw_cmd(priv, H2C_JOINBSS_CMD, cmd, sizeof(*cmd) + ie_len);
 	kfree(cmd);
+	if (!ret) {
+		priv->connecting = true;
+	}
 
 done:
 	cfg80211_put_bss(priv->wiphy, bss);
@@ -679,7 +721,7 @@ static int rtlfmac_ndo_open(struct net_device *ndev)
 {
 	pr_info("%s: enter\n", __func__);
 
-	netif_start_queue(ndev);
+	netif_tx_start_all_queues(ndev);
 
 	return 0;
 }
@@ -688,7 +730,8 @@ static int rtlfmac_ndo_stop(struct net_device *ndev)
 {
 	pr_info("%s: enter\n", __func__);
 
-	netif_stop_queue(ndev);
+	netif_tx_stop_all_queues(ndev);
+	netif_carrier_off(ndev);
 
 	return 0;
 }
