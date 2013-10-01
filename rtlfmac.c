@@ -874,9 +874,16 @@ netdev_tx_t rtlfmac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		skb_push(skb, iv_len);
 		memmove(skb->data, skb->data + iv_len, hdrlen);
 
-		// XXX set IV
-		memset(skb->data + hdrlen, iv_len, 0);
-		skb->data[hdrlen + 3] |= 0x20;
+		skb->data[hdrlen + 0] = (priv->txiv >>  0) & 0xff;
+		skb->data[hdrlen + 1] = (priv->txiv >>  8) & 0xff;
+		skb->data[hdrlen + 2] = 0;
+		skb->data[hdrlen + 3] = 0x20 ; // | (key_id << 6) if b/m-cast
+		skb->data[hdrlen + 4] = (priv->txiv >> 16) & 0xff;
+		skb->data[hdrlen + 5] = (priv->txiv >> 24) & 0xff;
+		skb->data[hdrlen + 6] = (priv->txiv >> 32) & 0xff;
+		skb->data[hdrlen + 7] = (priv->txiv >> 40) & 0xff;
+		priv->txiv++;
+		priv->txiv &= 0xffffffffffffULL;
 	}
 
 	if (skb_headroom(skb) < RTL_TX_HEADER_SIZE) {
