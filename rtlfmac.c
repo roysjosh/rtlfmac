@@ -234,10 +234,13 @@ static void rtlfmac_rx_survey_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 
 	fixed = (struct ndis_802_11_fixed_ies *)survey->ies;
 
-	ie = survey->ies + sizeof(struct ndis_802_11_fixed_ies);
-	ie_len = survey->ielen - sizeof(struct ndis_802_11_fixed_ies);
-	if (sizeof(struct ndis_802_11_fixed_ies) > survey->ielen)
+	if (sizeof(struct ndis_802_11_fixed_ies) > survey->ielen) {
+		ie = NULL;
 		ie_len = 0;
+	} else {
+		ie = survey->ies + sizeof(struct ndis_802_11_fixed_ies);
+		ie_len = survey->ielen - sizeof(struct ndis_802_11_fixed_ies);
+	}
 
 	freq = ieee80211_channel_to_frequency(survey->config.dsconfig,
 			IEEE80211_BAND_2GHZ);
