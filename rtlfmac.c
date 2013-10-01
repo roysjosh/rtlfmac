@@ -827,6 +827,9 @@ static int rtlfmac_ndo_stop(struct net_device *ndev)
 {
 	netdev_dbg(ndev, "%s: enter\n", __func__);
 
+	if (ndev->ieee80211_ptr->current_bss) {
+		cfg80211_disconnected(ndev, 0, NULL, 0, GFP_KERNEL);
+	}
 	netif_tx_stop_all_queues(ndev);
 	netif_carrier_off(ndev);
 
