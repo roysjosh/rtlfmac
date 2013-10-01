@@ -39,6 +39,8 @@
 #define RTL_RX_HEADER_SIZE		24
 #define RTL_TX_HEADER_SIZE		32
 
+#define RTLFMAC_HT_CAP (IEEE80211_HT_CAP_SGI_20 | IEEE80211_HT_CAP_TX_STBC)
+
 enum rtlfmac_txq {
 #if 0
 	RTL_TXQ_BK,

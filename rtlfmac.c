@@ -547,8 +547,10 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 {
 	int chan = -1, ret;
 	size_t ie_len;
+	u8 *ie_ptr;
 	struct cfg80211_bss *bss;
 	struct ieee80211_channel *channel = sme->channel;
+	struct ieee80211_ht_cap *ht_cap;
 	struct ndis_802_11_fixed_ies *fixed;
 	struct rtlfmac_joinbss_cmd *cmd;
 	struct rtlfmac_setauth_cmd *authcmd;
@@ -613,6 +615,9 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 
 	// joinbss
 	ie_len = sizeof(struct ndis_802_11_fixed_ies) + sme->ie_len;
+	if (1) {
+		ie_len += (2 + sizeof(struct ieee80211_ht_cap));
+	}
 
 	cmd = kzalloc(sizeof(struct rtlfmac_joinbss_cmd) + ie_len, GFP_KERNEL);
 	if (!cmd) {
@@ -648,7 +653,17 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 	fixed->beaconint = cpu_to_le16(bss->beacon_interval);
 	fixed->caps = cpu_to_le16(bss->capability);
 	// append provided IEs
-	memcpy(&fixed[1], sme->ie, sme->ie_len);
+	ie_ptr = (u8 *)&fixed[1];
+	memcpy(ie_ptr, sme->ie, sme->ie_len);
+	ie_ptr += sme->ie_len;
+	// append constructed IEs
+	if (1) {
+		*(ie_ptr++) = WLAN_EID_HT_CAPABILITY;
+		*(ie_ptr++) = (u8)sizeof(struct ieee80211_ht_cap);
+		ht_cap = (struct ieee80211_ht_cap *)ie_ptr;
+		ht_cap->cap_info = RTLFMAC_HT_CAP;
+		ie_ptr += sizeof(struct ieee80211_ht_cap);
+	}
 
 	ret = rtlfmac_fw_cmd(priv, H2C_JOINBSS_CMD, cmd, sizeof(*cmd) + ie_len);
 	kfree(cmd);
@@ -805,7 +820,12 @@ static struct ieee80211_supported_band rtl_band_2ghz = {
 	.bitrates = rtl_ratetable_2g,
 	.n_bitrates = ARRAY_SIZE(rtl_ratetable_2g),
 
-	.ht_cap = {0},
+	.ht_cap.cap = RTLFMAC_HT_CAP,
+	.ht_cap.ht_supported = true,
+	.ht_cap.ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K,
+	.ht_cap.ampdu_density = IEEE80211_HT_MPDU_DENSITY_16,
+	.ht_cap.mcs.rx_mask[0] = 0xff,
+	.ht_cap.mcs.tx_params = IEEE80211_HT_MCS_TX_DEFINED,
 };
 
 static const u32 rtlfmac_cipher_suites[] = {
