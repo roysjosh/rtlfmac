@@ -546,6 +546,9 @@ struct rtlfmac_cfg80211_priv {
 
 	bool connecting;
 	bool ieee8021x_blocked;
+	u32 cipher_pairwise;
+	u32 cipher_group;
+	int iv_len;
 	u8 key_id:2;
 	u64 txiv;
 	u8 bssid[ETH_ALEN];

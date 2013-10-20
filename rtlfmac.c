@@ -293,9 +293,9 @@ static void rtlfmac_rx_join_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 /* Unfortunately, ieee80211_data_to_8023 doesn't handle the IV junk bytes
  * between the 802.11 header and the SNAP header.  Thus, our own function.
  */
-static int rtlfmac_data_to_8023(struct sk_buff *skb, const uint8_t *addr, enum nl80211_iftype iftype)
+static int rtlfmac_data_to_8023(struct sk_buff *skb, const uint8_t *addr, enum nl80211_iftype iftype, int iv_len)
 {
-	int hdrlen, iv_len = 8; // AES/CCMP
+	int hdrlen;
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
 
 	hdrlen = ieee80211_hdrlen(hdr->frame_control);
@@ -359,7 +359,7 @@ static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buf
 	skb_pull(skb, pdesc->drvinfo_size * 8);
 
 	// convert 802.11 frame to 802.3 frame
-	if (rtlfmac_data_to_8023(skb, priv->ndev->perm_addr, priv->wdev->iftype)) {
+	if (rtlfmac_data_to_8023(skb, priv->ndev->perm_addr, priv->wdev->iftype, priv->iv_len)) {
 		netdev_err(priv->ndev, "%s: failed to convert 802.11 to 802.3\n", __func__);
 		dev_kfree_skb_any(skb);
 		return;
@@ -606,6 +606,18 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 	} else { // default to open
 		authcmd->mode = IW_AUTHMODE_OPEN;
 	}
+
+	priv->cipher_pairwise = sme->crypto.ciphers_pairwise[0];
+	switch (sme->crypto.ciphers_pairwise[0]) {
+	case 0:
+		priv->iv_len = 0;
+		break;
+	case WLAN_CIPHER_SUITE_CCMP:
+		priv->iv_len = 8;
+		break;
+	}
+
+	priv->cipher_group = sme->crypto.cipher_group;
 
 	ret = rtlfmac_fw_cmd(priv, H2C_SETAUTH_CMD, authcmd, sizeof(*authcmd));
 	kfree(authcmd);
@@ -861,7 +873,7 @@ static int rtlfmac_ndo_stop(struct net_device *ndev)
 
 netdev_tx_t rtlfmac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
-	int hdrlen, iv_len = 8; // AES/CCMP
+	int hdrlen;
 	struct ethhdr *eth = (struct ethhdr *)skb->data;
 	struct ieee80211_qos_hdr *hdr;
 	struct rtlfmac_cfg80211_priv *priv = wiphy_priv(ndev->ieee80211_ptr->wiphy);
@@ -886,7 +898,7 @@ netdev_tx_t rtlfmac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	hdr->seq_ctrl = cpu_to_le16(IEEE80211_SN_TO_SEQ(priv->seqno[RTL_TXQ_BE]));
 
 	// or in PROT if WEP/WPA is enabled
-	if (/*wpa && */!priv->ieee8021x_blocked) {
+	if (priv->cipher_pairwise && !priv->ieee8021x_blocked) {
 		// 802.1x is complete
 		hdr->frame_control |= cpu_to_le16(IEEE80211_FCTL_PROTECTED);
 	}
@@ -894,8 +906,8 @@ netdev_tx_t rtlfmac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	// need to emulate IEEE80211_KEY_FLAG_PUT_IV_SPACE
 	if (ieee80211_has_protected(hdr->frame_control)) {
 		hdrlen = ieee80211_hdrlen(hdr->frame_control);
-		skb_push(skb, iv_len);
-		memmove(skb->data, skb->data + iv_len, hdrlen);
+		skb_push(skb, priv->iv_len);
+		memmove(skb->data, skb->data + priv->iv_len, hdrlen);
 
 		skb->data[hdrlen + 0] = (priv->txiv >>  0) & 0xff;
 		skb->data[hdrlen + 1] = (priv->txiv >>  8) & 0xff;
