@@ -1498,11 +1498,128 @@ static void rtlfmac_disconnect(struct usb_interface *intf)
 }
 
 static const struct usb_device_id products[] = {
-	{
-		.idVendor = 0x0b05,
-		.idProduct = 0x1786,
-	},
-	{ }
+/* RTL8188SU */
+	/* Realtek */
+	{USB_DEVICE(0x0BDA, 0x8171)},
+	{USB_DEVICE(0x0bda, 0x8173)},
+	{USB_DEVICE(0x0bda, 0x8712)},
+	{USB_DEVICE(0x0bda, 0x8713)},
+	{USB_DEVICE(0x0bda, 0xC512)},
+	/* Abocom */
+	{USB_DEVICE(0x07B8, 0x8188)},
+	/* ASUS */
+	{USB_DEVICE(0x0B05, 0x1786)},
+	{USB_DEVICE(0x0B05, 0x1791)}, /* 11n mode disable */
+	/* Belkin */
+	{USB_DEVICE(0x050D, 0x945A)},
+	/* ISY IWL - Belkin clone */
+	{USB_DEVICE(0x050D, 0x11F1)},
+	/* Corega */
+	{USB_DEVICE(0x07AA, 0x0047)},
+	/* D-Link */
+	{USB_DEVICE(0x2001, 0x3306)},
+	{USB_DEVICE(0x07D1, 0x3306)}, /* 11n mode disable */
+	/* Edimax */
+	{USB_DEVICE(0x7392, 0x7611)},
+	/* EnGenius */
+	{USB_DEVICE(0x1740, 0x9603)},
+	/* Hawking */
+	{USB_DEVICE(0x0E66, 0x0016)},
+	/* Hercules */
+	{USB_DEVICE(0x06F8, 0xE034)},
+	{USB_DEVICE(0x06F8, 0xE032)},
+	/* Logitec */
+	{USB_DEVICE(0x0789, 0x0167)},
+	/* PCI */
+	{USB_DEVICE(0x2019, 0xAB28)},
+	{USB_DEVICE(0x2019, 0xED16)},
+	/* Sitecom */
+	{USB_DEVICE(0x0DF6, 0x0057)},
+	{USB_DEVICE(0x0DF6, 0x0045)},
+	{USB_DEVICE(0x0DF6, 0x0059)}, /* 11n mode disable */
+	{USB_DEVICE(0x0DF6, 0x004B)},
+	{USB_DEVICE(0x0DF6, 0x005B)},
+	{USB_DEVICE(0x0DF6, 0x005D)},
+	{USB_DEVICE(0x0DF6, 0x0063)},
+	/* Sweex */
+	{USB_DEVICE(0x177F, 0x0154)},
+	/* Thinkware */
+	{USB_DEVICE(0x0BDA, 0x5077)},
+	/* Toshiba */
+	{USB_DEVICE(0x1690, 0x0752)},
+	/* - */
+	{USB_DEVICE(0x20F4, 0x646B)},
+	{USB_DEVICE(0x083A, 0xC512)},
+	{USB_DEVICE(0x25D4, 0x4CA1)},
+	{USB_DEVICE(0x25D4, 0x4CAB)},
+
+/* RTL8191SU */
+	/* Realtek */
+	{USB_DEVICE(0x0BDA, 0x8172)},
+	{USB_DEVICE(0x0BDA, 0x8192)},
+	/* Amigo */
+	{USB_DEVICE(0x0EB0, 0x9061)},
+	/* ASUS/EKB */
+	{USB_DEVICE(0x13D3, 0x3323)},
+	{USB_DEVICE(0x13D3, 0x3311)}, /* 11n mode disable */
+	{USB_DEVICE(0x13D3, 0x3342)},
+	/* ASUS/EKBLenovo */
+	{USB_DEVICE(0x13D3, 0x3333)},
+	{USB_DEVICE(0x13D3, 0x3334)},
+	{USB_DEVICE(0x13D3, 0x3335)}, /* 11n mode disable */
+	{USB_DEVICE(0x13D3, 0x3336)}, /* 11n mode disable */
+	/* ASUS/Media BOX */
+	{USB_DEVICE(0x13D3, 0x3309)},
+	/* Belkin */
+	{USB_DEVICE(0x050D, 0x815F)},
+	/* D-Link */
+	{USB_DEVICE(0x07D1, 0x3302)},
+	{USB_DEVICE(0x07D1, 0x3300)},
+	{USB_DEVICE(0x07D1, 0x3303)},
+	/* Edimax */
+	{USB_DEVICE(0x7392, 0x7612)},
+	/* EnGenius */
+	{USB_DEVICE(0x1740, 0x9605)},
+	/* Guillemot */
+	{USB_DEVICE(0x06F8, 0xE031)},
+	/* Hawking */
+	{USB_DEVICE(0x0E66, 0x0015)},
+	/* Mediao */
+	{USB_DEVICE(0x13D3, 0x3306)},
+	/* PCI */
+	{USB_DEVICE(0x2019, 0xED18)},
+	{USB_DEVICE(0x2019, 0x4901)},
+	/* Sitecom */
+	{USB_DEVICE(0x0DF6, 0x0058)},
+	{USB_DEVICE(0x0DF6, 0x0049)},
+	{USB_DEVICE(0x0DF6, 0x004C)},
+	{USB_DEVICE(0x0DF6, 0x0064)},
+	/* Skyworth */
+	{USB_DEVICE(0x14b2, 0x3300)},
+	{USB_DEVICE(0x14b2, 0x3301)},
+	{USB_DEVICE(0x14B2, 0x3302)},
+	/* - */
+	{USB_DEVICE(0x04F2, 0xAFF2)},
+	{USB_DEVICE(0x04F2, 0xAFF5)},
+	{USB_DEVICE(0x04F2, 0xAFF6)},
+	{USB_DEVICE(0x13D3, 0x3339)},
+	{USB_DEVICE(0x13D3, 0x3340)}, /* 11n mode disable */
+	{USB_DEVICE(0x13D3, 0x3341)}, /* 11n mode disable */
+	{USB_DEVICE(0x13D3, 0x3310)},
+	{USB_DEVICE(0x13D3, 0x3325)},
+
+/* RTL8192SU */
+	/* Realtek */
+	{USB_DEVICE(0x0BDA, 0x8174)},
+	/* Belkin */
+	{USB_DEVICE(0x050D, 0x845A)},
+	/* Corega */
+	{USB_DEVICE(0x07AA, 0x0051)},
+	/* Edimax */
+	{USB_DEVICE(0x7392, 0x7622)},
+	/* NEC */
+	{USB_DEVICE(0x0409, 0x02B6)},
+	{}
 };
 
 MODULE_DEVICE_TABLE(usb, products);
