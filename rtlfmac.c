@@ -612,8 +612,11 @@ int rtlfmac_connect(struct rtlfmac_cfg80211_priv *priv, struct net_device *ndev,
 	case 0:
 		priv->iv_len = 0;
 		break;
+	case WLAN_CIPHER_SUITE_WEP40:
+		priv->iv_len = IEEE80211_WEP_IV_LEN;
+		break;
 	case WLAN_CIPHER_SUITE_CCMP:
-		priv->iv_len = 8;
+		priv->iv_len = IEEE80211_CCMP_HDR_LEN;
 		break;
 	}
 
@@ -734,6 +737,9 @@ static int rtlfmac_cfg80211_add_key(struct wiphy *wiphy, struct net_device *ndev
 	netdev_dbg(ndev, "%s: enter idx=%hhu pair=%u mac=%pM\n", __func__, key_index, pairwise, mac_addr);
 
 	switch(params->cipher) {
+	case WLAN_CIPHER_SUITE_WEP40:
+		algo = IW_KEYALGO_WEP40;
+		break;
 	case WLAN_CIPHER_SUITE_CCMP:
 		algo = IW_KEYALGO_AES;
 		break;
@@ -909,16 +915,28 @@ netdev_tx_t rtlfmac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 		skb_push(skb, priv->iv_len);
 		memmove(skb->data, skb->data + priv->iv_len, hdrlen);
 
-		skb->data[hdrlen + 0] = (priv->txiv >>  0) & 0xff;
-		skb->data[hdrlen + 1] = (priv->txiv >>  8) & 0xff;
-		skb->data[hdrlen + 2] = 0;
-		skb->data[hdrlen + 3] = 0x20 ; // | (key_id << 6) if b/m-cast
-		skb->data[hdrlen + 4] = (priv->txiv >> 16) & 0xff;
-		skb->data[hdrlen + 5] = (priv->txiv >> 24) & 0xff;
-		skb->data[hdrlen + 6] = (priv->txiv >> 32) & 0xff;
-		skb->data[hdrlen + 7] = (priv->txiv >> 40) & 0xff;
-		priv->txiv++;
-		priv->txiv &= 0xffffffffffffULL;
+		switch (priv->cipher_pairwise) {
+		case WLAN_CIPHER_SUITE_WEP40:
+			skb->data[hdrlen + 0] = (priv->txiv >>  0) & 0xff;
+			skb->data[hdrlen + 1] = (priv->txiv >>  8) & 0xff;
+			skb->data[hdrlen + 2] = (priv->txiv >> 16) & 0xff;
+			skb->data[hdrlen + 3] = 0 ; // | (key_id << 6)
+			priv->txiv++;
+			priv->txiv &= 0xffffffULL;
+			break;
+		case WLAN_CIPHER_SUITE_CCMP:
+			skb->data[hdrlen + 0] = (priv->txiv >>  0) & 0xff;
+			skb->data[hdrlen + 1] = (priv->txiv >>  8) & 0xff;
+			skb->data[hdrlen + 2] = 0;
+			skb->data[hdrlen + 3] = 0x20 ; // | (key_id << 6) if b/m-cast
+			skb->data[hdrlen + 4] = (priv->txiv >> 16) & 0xff;
+			skb->data[hdrlen + 5] = (priv->txiv >> 24) & 0xff;
+			skb->data[hdrlen + 6] = (priv->txiv >> 32) & 0xff;
+			skb->data[hdrlen + 7] = (priv->txiv >> 40) & 0xff;
+			priv->txiv++;
+			priv->txiv &= 0xffffffffffffULL;
+			break;
+		}
 	}
 
 	if (skb_headroom(skb) < RTL_TX_HEADER_SIZE) {
@@ -933,10 +951,15 @@ netdev_tx_t rtlfmac_ndo_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	pdesc->pkt_size = cpu_to_le16(skb->len - RTL_TX_HEADER_SIZE);
 	pdesc->macid = 5;
 	pdesc->queue_sel = 0x03; // BE
-	// FIXME if (wpa)
-	pdesc->sec_type = 0x03; // AES/CCMP
-	pdesc->key_id = priv->key_id;
-	// XXX
+	switch (priv->cipher_pairwise) {
+	case WLAN_CIPHER_SUITE_WEP40:
+		pdesc->sec_type = 0x01;
+		pdesc->key_id = priv->key_id;
+		break;
+	case WLAN_CIPHER_SUITE_CCMP:
+		pdesc->sec_type = 0x03;
+		break;
+	}
 	pdesc->own = 1;
 
 	skb->queue_mapping = RTL_TXQ_BE;
