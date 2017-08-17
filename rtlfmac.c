@@ -243,7 +243,7 @@ static void rtlfmac_rx_survey_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 	}
 
 	freq = ieee80211_channel_to_frequency(survey->config.dsconfig,
-			IEEE80211_BAND_2GHZ);
+			NL80211_BAND_2GHZ);
 	chan = ieee80211_get_channel(priv->wiphy, freq);
 
 	//signal = DBM_TO_MBM(rtl92s_signal_scale_mapping(le32_to_cpu(survey->rssi)));
@@ -252,8 +252,8 @@ static void rtlfmac_rx_survey_resp(struct rtlfmac_cfg80211_priv *priv, u8 *data)
 	caps = le16_to_cpu(fixed->caps);
 	beaconint = le16_to_cpu(fixed->beaconint);
 
-	bss = cfg80211_inform_bss(priv->wiphy, chan, survey->macaddr, tsf, caps,
-			beaconint, ie, ie_len, signal, GFP_ATOMIC);
+	bss = cfg80211_inform_bss(priv->wiphy, chan, CFG80211_BSS_FTYPE_UNKNOWN, survey->macaddr,
+			tsf, caps, beaconint, ie, ie_len, signal, GFP_ATOMIC);
 	cfg80211_put_bss(priv->wiphy, bss);
 }
 
@@ -339,7 +339,7 @@ static void rtlfmac_rx_process(struct rtlfmac_cfg80211_priv *priv, struct sk_buf
 			rtlfmac_rx_join_resp(priv, skb->data);
 			break;
 		case C2H_DEL_STA_EVENT:
-			cfg80211_disconnected(priv->ndev, 0, NULL, 0, GFP_ATOMIC);
+			cfg80211_disconnected(priv->ndev, 0, NULL, 0, false, GFP_ATOMIC);
 			break;
 		case C2H_FWDBG_EVENT:
 			netdev_dbg(priv->ndev, "%s: fwdbg: %s%s", __func__, skb->data,
@@ -830,7 +830,7 @@ static struct ieee80211_rate rtl_ratetable_2g[] = {
 };
 
 static struct ieee80211_supported_band rtl_band_2ghz = {
-	.band = IEEE80211_BAND_2GHZ,
+	.band = NL80211_BAND_2GHZ,
 
 	.channels = rtl_channeltable_2g,
 	.n_channels = ARRAY_SIZE(rtl_channeltable_2g),
@@ -869,7 +869,7 @@ static int rtlfmac_ndo_stop(struct net_device *ndev)
 	netdev_dbg(ndev, "%s: enter\n", __func__);
 
 	if (ndev->ieee80211_ptr->current_bss) {
-		cfg80211_disconnected(ndev, 0, NULL, 0, GFP_KERNEL);
+		cfg80211_disconnected(ndev, 0, NULL, 0, true, GFP_KERNEL);
 	}
 	netif_tx_stop_all_queues(ndev);
 	netif_carrier_off(ndev);
@@ -1359,8 +1359,8 @@ static struct rtlfmac_cfg80211_priv *rtlfmac_alloc(void)
 	wiphy->max_scan_ssids = 1;
 	wiphy->max_num_pmkids = 16;
 
-	wiphy->bands[IEEE80211_BAND_2GHZ] = &rtl_band_2ghz;
-	//wiphy->bands[IEEE80211_BAND_5GHZ]
+	wiphy->bands[NL80211_BAND_2GHZ] = &rtl_band_2ghz;
+	//wiphy->bands[NL80211_BAND_5GHZ]
 	wiphy->cipher_suites = rtlfmac_cipher_suites;
 	wiphy->n_cipher_suites = ARRAY_SIZE(rtlfmac_cipher_suites);
 
@@ -1370,7 +1370,7 @@ static struct rtlfmac_cfg80211_priv *rtlfmac_alloc(void)
 	//wiphy->flags = ;
 
 	/* allocate net_device */
-	ndev = alloc_netdev(0, "wlan%d", ether_setup);
+	ndev = alloc_netdev(0, "wlan%d", NET_NAME_UNKNOWN, ether_setup);
 	if (!ndev) {
 		pr_err("%s: alloc_netdev failed\n", __func__);
 		wiphy_free(wiphy);
@@ -1498,6 +1498,7 @@ int rtlfmac_probe(struct usb_interface *intf,
 
 static void rtlfmac_disconnect(struct usb_interface *intf)
 {
+	struct cfg80211_scan_info info = {};
 	struct rtlfmac_cfg80211_priv *priv;
 	struct usb_device *usb = interface_to_usbdev(intf);
 
@@ -1508,7 +1509,8 @@ static void rtlfmac_disconnect(struct usb_interface *intf)
 	rtlfmac_rx_cleanup(priv);
 
 	if (priv->scan_request) {
-		cfg80211_scan_done(priv->scan_request, true);
+		info.aborted = true;
+		cfg80211_scan_done(priv->scan_request, &info);
 	}
 
 	unregister_netdev(priv->ndev);
